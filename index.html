@@ -154,18 +154,13 @@
                         <span id="char-count-badge">0 文字</span>
                     </div>
                     
-                <!-- 共通取り込み機能：共有テキストに加え、ファイルとURLから取り込めます -->
+                <!-- 共通取り込み機能：テキスト・PDF・画像から文章を取り込みます -->
                 <div class="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-3" id="study-import-panel">
                     <div class="font-bold text-sm text-slate-200">📥 文章を取り込む</div>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <label class="text-xs text-slate-300">テキスト・PDFファイル
-                            <input type="file" id="study-import-file" accept=".txt,.md,.csv,.html,.htm,.pdf,.epub,text/plain,text/markdown,text/html,application/pdf,application/epub+zip" class="block w-full mt-1 text-xs text-slate-300" />
-                        </label>
-                        <div class="text-xs text-slate-300">Web記事のURL
-                            <div class="flex gap-2 mt-1"><input id="study-import-url" type="url" placeholder="https://..." class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-600 px-2 py-2 text-xs text-white" /><button type="button" id="study-import-url-btn" class="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white">取得</button></div>
-                        </div>
-                    </div>
-                    <div id="study-import-status" aria-live="polite" class="text-xs text-slate-400">共有メニューからの文章取り込みも引き続き利用できます。PDFの読み込みにはネット接続が必要です。</div>
+                    <label class="block text-xs text-slate-300">テキスト・PDF・画像ファイル
+                        <input type="file" id="study-import-file" accept=".txt,.md,.csv,.html,.htm,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,text/plain,text/markdown,text/html,application/pdf,image/*" class="block w-full mt-1 text-xs text-slate-300" />
+                    </label>
+                    <div id="study-import-status" aria-live="polite" class="text-xs text-slate-400">画像やスキャンPDFはOCRで文字を読み取れます。OCRの初回利用にはインターネット接続が必要です。読み取り結果は確認してからお使いください。</div>
                 </div>
 
 <textarea
@@ -791,16 +786,16 @@
  const input = document.getElementById('input-text');
  const status = document.getElementById('study-import-status');
  const fileInput = document.getElementById('study-import-file');
- const urlInput = document.getElementById('study-import-url');
- if (!input || !status || !fileInput || !urlInput) return;
+ if (!input || !status || !fileInput) return;
  const say = (s) => { status.textContent = s; };
  const setText = (text, label) => {
    text = String(text || '').replace(/\u0000/g, '').trim();
-   if (!text) { say('取り込める文章が見つかりませんでした。'); return; }
+   if (!text) { say('文字を読み取れませんでした。画像を鮮明にするか、テキストを貼り付けてください。'); return false; }
    input.value = text;
    input.dispatchEvent(new Event('input', {bubbles:true}));
    input.dispatchEvent(new Event('change', {bubbles:true}));
-   say(label + 'を取り込みました（' + text.length.toLocaleString() + '文字）。必要に応じて内容を確認してください。');
+   say(label + 'を取り込みました（' + text.length.toLocaleString() + '文字）。読み取り間違いがないか確認してください。');
+   return true;
  };
  const htmlToText = html => {
    const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -808,16 +803,26 @@
    const main = doc.querySelector('article,main,[role="main"]') || doc.body;
    return (main ? main.innerText || main.textContent : doc.body.innerText || doc.body.textContent).replace(/\n{3,}/g,'\n\n').trim();
  };
+ async function loadScript(src, readyCheck, message) {
+   if (readyCheck()) return;
+   await new Promise((resolve,reject)=>{
+     const s=document.createElement('script'); s.src=src; s.onload=resolve; s.onerror=()=>reject(new Error(message)); document.head.appendChild(s);
+   });
+   if (!readyCheck()) throw new Error(message);
+ }
+ async function getOcr() {
+   await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js', ()=>!!window.Tesseract, 'OCRライブラリを読み込めません。インターネット接続を確認してください。');
+   return window.Tesseract;
+ }
+ async function recognizeImage(image, label) {
+   say('OCRを準備しています…初回は日本語データの取得に時間がかかります。');
+   const Tesseract = await getOcr();
+   const result = await Tesseract.recognize(image, 'jpn+eng', { logger: m => { if(m.status==='recognizing text') say('OCRで文字を読み取り中… '+Math.round((m.progress||0)*100)+'%'); else if(m.status==='loading language traineddata') say('日本語のOCRデータを準備中…'); } });
+   setText(result.data && result.data.text, label);
+ }
  async function loadPdf(file) {
    say('PDFを解析しています…');
-   if (!window.pdfjsLib) {
-     await new Promise((resolve,reject)=>{
-       const s=document.createElement('script');
-       s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-       s.onload=resolve; s.onerror=()=>reject(new Error('PDF解析ライブラリを読み込めません。ネット接続を確認してください。'));
-       document.head.appendChild(s);
-     });
-   }
+   await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', ()=>!!window.pdfjsLib, 'PDF解析ライブラリを読み込めません。インターネット接続を確認してください。');
    window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
    const pdf=await window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
    const pages=[];
@@ -825,9 +830,19 @@
      const page=await pdf.getPage(p); const content=await page.getTextContent();
      pages.push(content.items.map(x=>x.str).join(' '));
    }
-   const text=pages.join('\n\n');
-   if(!text.trim()) throw new Error('文字情報がありません。スキャンPDFはOCRでテキスト化してから取り込んでください。');
-   setText(text,file.name);
+   const text=pages.join('\n\n').trim();
+   if(text) { setText(text,file.name); return; }
+   say('スキャンPDFのため、OCRで読み取ります…');
+   const Tesseract = await getOcr();
+   const output=[];
+   for(let p=1;p<=pdf.numPages;p++){
+     say('PDFをOCRで読み取り中… '+p+'/'+pdf.numPages+'ページ');
+     const page=await pdf.getPage(p); const viewport=page.getViewport({scale:1.6});
+     const canvas=document.createElement('canvas'); canvas.width=Math.ceil(viewport.width); canvas.height=Math.ceil(viewport.height);
+     await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+     const result=await Tesseract.recognize(canvas,'jpn+eng'); output.push(result.data && result.data.text || '');
+   }
+   setText(output.join('\n\n'),file.name+'（OCR）');
  }
  fileInput.addEventListener('change', async()=>{
    const f=fileInput.files && fileInput.files[0]; if(!f)return;
@@ -836,21 +851,11 @@
      if(ext==='pdf') await loadPdf(f);
      else if(['txt','md','csv'].includes(ext)) setText(await f.text(),f.name);
      else if(['html','htm'].includes(ext)) setText(htmlToText(await f.text()),f.name);
-     else if(ext==='epub') say('EPUBはこの版では直接解析できません。DRMのない本をTXT/HTMLに書き出して取り込んでください。');
-     else say('この形式は未対応です。TXT、MD、HTML、PDFをお使いください。');
+     else if(['png','jpg','jpeg','webp','bmp','tif','tiff'].includes(ext) || (f.type && f.type.startsWith('image/'))) await recognizeImage(f,f.name+'（OCR）');
+     else if(ext==='epub') say('EPUBは直接解析できません。DRMのない本をTXT/HTMLに書き出して取り込んでください。');
+     else say('この形式は未対応です。TXT、MD、HTML、PDF、PNG、JPGなどの画像をお使いください。');
    } catch(e) { say('ファイルを読み込めませんでした：'+e.message); }
    fileInput.value='';
- });
- document.getElementById('study-import-url-btn').addEventListener('click', async()=>{
-   const url=urlInput.value.trim(); if(!url)return say('先にWeb記事のURLを入力してください。');
-   try {
-     const parsed=new URL(url); if(!['http:','https:'].includes(parsed.protocol)) throw new Error('http/httpsのURLを入力してください。');
-     say('Web記事を取得しています…');
-     const res=await fetch(parsed.href,{mode:'cors'}); if(!res.ok) throw new Error('サイトから取得できませんでした（HTTP '+res.status+'）。');
-     const type=res.headers.get('content-type')||''; if(!type.includes('text/html') && !type.includes('text/plain')) throw new Error('このURLはHTML/テキストではありません。');
-     const body=await res.text(); const text=type.includes('text/html')?htmlToText(body):body;
-     setText(text, 'Web記事');
-   } catch(e) { say('自動取得できませんでした：'+e.message+'。サイト側の制限（CORS等）の可能性があります。記事本文をコピーして入力欄へ貼り付けるか、ブラウザの共有メニューをご利用ください。'); }
  });
 })();
 </script>
