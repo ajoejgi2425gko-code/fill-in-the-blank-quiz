@@ -153,7 +153,22 @@
                         <span class="font-bold text-slate-300">問題テキスト ( [カッコ] で囲むか、自動抽出モードを使用 )</span>
                         <span id="char-count-badge">0 文字</span>
                     </div>
-                    <textarea
+                    
+                <!-- 共通取り込み機能：共有テキストに加え、ファイルとURLから取り込めます -->
+                <div class="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-3" id="study-import-panel">
+                    <div class="font-bold text-sm text-slate-200">📥 文章を取り込む</div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label class="text-xs text-slate-300">テキスト・PDFファイル
+                            <input type="file" id="study-import-file" accept=".txt,.md,.csv,.html,.htm,.pdf,.epub,text/plain,text/markdown,text/html,application/pdf,application/epub+zip" class="block w-full mt-1 text-xs text-slate-300" />
+                        </label>
+                        <div class="text-xs text-slate-300">Web記事のURL
+                            <div class="flex gap-2 mt-1"><input id="study-import-url" type="url" placeholder="https://..." class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-600 px-2 py-2 text-xs text-white" /><button type="button" id="study-import-url-btn" class="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white">取得</button></div>
+                        </div>
+                    </div>
+                    <div id="study-import-status" aria-live="polite" class="text-xs text-slate-400">共有メニューからの文章取り込みも引き続き利用できます。PDFの読み込みにはネット接続が必要です。</div>
+                </div>
+
+<textarea
                         id="input-text"
                         rows="7"
                         placeholder="例: 1192年に[源頼朝]が[鎌倉幕府]を開いた。&#10;※カッコをつけない場合も、下の自動抽出でキーワードを穴埋め化できます。"
@@ -771,6 +786,75 @@
         }
         window.addEventListener('load', initializeFromShareOrSample);
     </script>
+<script>
+(() => {
+ const input = document.getElementById('input-text');
+ const status = document.getElementById('study-import-status');
+ const fileInput = document.getElementById('study-import-file');
+ const urlInput = document.getElementById('study-import-url');
+ if (!input || !status || !fileInput || !urlInput) return;
+ const say = (s) => { status.textContent = s; };
+ const setText = (text, label) => {
+   text = String(text || '').replace(/\u0000/g, '').trim();
+   if (!text) { say('取り込める文章が見つかりませんでした。'); return; }
+   input.value = text;
+   input.dispatchEvent(new Event('input', {bubbles:true}));
+   input.dispatchEvent(new Event('change', {bubbles:true}));
+   say(label + 'を取り込みました（' + text.length.toLocaleString() + '文字）。必要に応じて内容を確認してください。');
+ };
+ const htmlToText = html => {
+   const doc = new DOMParser().parseFromString(html, 'text/html');
+   doc.querySelectorAll('script,style,noscript,nav,footer,header,aside,form,svg').forEach(n=>n.remove());
+   const main = doc.querySelector('article,main,[role="main"]') || doc.body;
+   return (main ? main.innerText || main.textContent : doc.body.innerText || doc.body.textContent).replace(/\n{3,}/g,'\n\n').trim();
+ };
+ async function loadPdf(file) {
+   say('PDFを解析しています…');
+   if (!window.pdfjsLib) {
+     await new Promise((resolve,reject)=>{
+       const s=document.createElement('script');
+       s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+       s.onload=resolve; s.onerror=()=>reject(new Error('PDF解析ライブラリを読み込めません。ネット接続を確認してください。'));
+       document.head.appendChild(s);
+     });
+   }
+   window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+   const pdf=await window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+   const pages=[];
+   for(let p=1;p<=pdf.numPages;p++){
+     const page=await pdf.getPage(p); const content=await page.getTextContent();
+     pages.push(content.items.map(x=>x.str).join(' '));
+   }
+   const text=pages.join('\n\n');
+   if(!text.trim()) throw new Error('文字情報がありません。スキャンPDFはOCRでテキスト化してから取り込んでください。');
+   setText(text,file.name);
+ }
+ fileInput.addEventListener('change', async()=>{
+   const f=fileInput.files && fileInput.files[0]; if(!f)return;
+   try {
+     const ext=f.name.split('.').pop().toLowerCase();
+     if(ext==='pdf') await loadPdf(f);
+     else if(['txt','md','csv'].includes(ext)) setText(await f.text(),f.name);
+     else if(['html','htm'].includes(ext)) setText(htmlToText(await f.text()),f.name);
+     else if(ext==='epub') say('EPUBはこの版では直接解析できません。DRMのない本をTXT/HTMLに書き出して取り込んでください。');
+     else say('この形式は未対応です。TXT、MD、HTML、PDFをお使いください。');
+   } catch(e) { say('ファイルを読み込めませんでした：'+e.message); }
+   fileInput.value='';
+ });
+ document.getElementById('study-import-url-btn').addEventListener('click', async()=>{
+   const url=urlInput.value.trim(); if(!url)return say('先にWeb記事のURLを入力してください。');
+   try {
+     const parsed=new URL(url); if(!['http:','https:'].includes(parsed.protocol)) throw new Error('http/httpsのURLを入力してください。');
+     say('Web記事を取得しています…');
+     const res=await fetch(parsed.href,{mode:'cors'}); if(!res.ok) throw new Error('サイトから取得できませんでした（HTTP '+res.status+'）。');
+     const type=res.headers.get('content-type')||''; if(!type.includes('text/html') && !type.includes('text/plain')) throw new Error('このURLはHTML/テキストではありません。');
+     const body=await res.text(); const text=type.includes('text/html')?htmlToText(body):body;
+     setText(text, 'Web記事');
+   } catch(e) { say('自動取得できませんでした：'+e.message+'。サイト側の制限（CORS等）の可能性があります。記事本文をコピーして入力欄へ貼り付けるか、ブラウザの共有メニューをご利用ください。'); }
+ });
+})();
+</script>
+
 <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
