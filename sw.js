@@ -1,4 +1,4 @@
-const CACHE_NAME = 'anaume-quiz-v2';
+const CACHE_NAME = 'anaume-quiz-v2-identity-fix';
 const SHARE_CACHE = 'anaume-quiz-share-v1';
 const BASE_URL = new URL('./', self.location.href);
 const SHARE_DATA_URL = new URL('./__shared_data__', BASE_URL).href;
